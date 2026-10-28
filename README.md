@@ -1,4 +1,4 @@
-# launch
+# QuickDevLaunch
 
 A tiny terminal menu for starting dev servers. Type `launch`, pick a project, press Enter: it `cd`s into the project and runs its dev server in the same terminal. Each row also shows git status, so you can see unpulled changes before you start.
 
@@ -21,14 +21,13 @@ No dependencies, just Node 18+ and git.
 | `Enter` | `cd` into the project and start the dev server |
 | `p` | Pull (fast-forward only) |
 | `r` | Re-fetch the selected project |
-| `a` | Add the current directory (needs a `package.json`) |
-| `d` | Remove the selected project (asks `y/n`) |
+| `a` | Add the current directory (needs a `package.json`) || `d` | Remove the selected project (asks `y/n`) |
 | `q` / `Esc` | Quit |
 
 ## Setup (Windows)
 
 ```powershell
-git clone <this-repo> D:\Projects\launch
+git clone https://github.com/Archit-Jain05/QuickDevLaunch D:\Projects\launch
 cd D:\Projects\launch
 copy projects.example.json projects.json   # then edit, or add projects from the menu with `a`
 ```
