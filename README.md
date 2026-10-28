@@ -59,3 +59,7 @@ function launch {
 ```
 node launch.test.mjs
 ```
+
+## License
+
+[MIT](LICENSE)
