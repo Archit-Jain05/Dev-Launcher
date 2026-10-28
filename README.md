@@ -9,7 +9,8 @@ No dependencies, just Node 18+ and git.
 - Arrow-key menu (`↑` `↓` or `j` `k`), Enter to launch
 - Git status per project, fetched in parallel on open: branch, `↓N behind`, `↑N ahead`, `● uncommitted`
 - Pull the selected project with one key (`git pull --ff-only`, never creates merge commits)
-- Picks `pnpm` / `yarn` / `bun` / `npm` from the lockfile, and runs `dev` (falling back to `start`)
+- Picks `pnpm` / `yarn` / `bun` / `npm` from the lockfile, and runs `dev` (falling back to `start`), or a per-project `cmd` override
+- Auto-installs dependencies when `node_modules` is missing or a pull changed them
 - Works in PowerShell and cmd on Windows
 
 ## Keys
@@ -48,11 +49,16 @@ function launch {
 
 ## Config
 
-`projects.json` is a list of absolute project paths (git-ignored, since paths are machine-specific):
+`projects.json` is a list of absolute project paths (git-ignored, since paths are machine-specific). An entry can also be an object with a `cmd` to override the auto-detected command:
 
 ```json
-["D:\\Projects\\my-app", "D:\\Projects\\another-app"]
+[
+  "D:\\Projects\\my-app",
+  { "dir": "D:\\Projects\\monorepo", "cmd": "pnpm --filter web dev --port 4000" }
+]
 ```
+
+Dependencies are installed automatically before launch when `node_modules` is missing, or when a pull from the menu changed `package.json` or the lockfile.
 
 ## Test
 

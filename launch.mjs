@@ -14,14 +14,29 @@ export const load = () => { try { return JSON.parse(fs.readFileSync(CONF, 'utf8'
 const save = l => fs.writeFileSync(CONF, JSON.stringify(l, null, 2))
 
 // lockfile -> package manager; "dev" script, else "start"
+export function pmOf(dir) {
+  const has = f => fs.existsSync(path.join(dir, f))
+  return has('pnpm-lock.yaml') ? 'pnpm' : has('yarn.lock') ? 'yarn' : has('bun.lockb') || has('bun.lock') ? 'bun' : 'npm'
+}
+
 export function devCmd(dir) {
   let scripts
   try { scripts = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).scripts ?? {} } catch { return null }
   const s = scripts.dev ? 'dev' : scripts.start ? 'start' : null
   if (!s) return null
-  const has = f => fs.existsSync(path.join(dir, f))
-  const pm = has('pnpm-lock.yaml') ? 'pnpm' : has('yarn.lock') ? 'yarn' : has('bun.lockb') || has('bun.lock') ? 'bun' : 'npm'
+  const pm = pmOf(dir)
   return pm === 'npm' ? (s === 'dev' ? 'npm run dev' : 'npm start') : `${pm} ${s}`
+}
+
+// what to run for a project: its cmd override (else auto-detected), plus an install when
+// node_modules is missing or a pull changed package.json / the lockfile (stale).
+// ponytail: staleness only known for pulls done in this menu session; add an mtime check if you pull elsewhere.
+export function plan(p, stale) {
+  const cmd = p.cmd || devCmd(p.dir)
+  if (!cmd) return null
+  const has = f => fs.existsSync(path.join(p.dir, f))
+  const install = has('package.json') && (stale || !has('node_modules')) ? `${pmOf(p.dir)} install` : null
+  return { cmd, install }
 }
 
 // "ahead\tbehind" from `rev-list --left-right --count HEAD...@{u}`
@@ -71,7 +86,9 @@ export function frame(st, cols = 80, rows = 24) {
   return out.slice(0, rows).join('\r\n')
 }
 
-const items = () => load().map(dir => ({ dir, name: path.basename(dir) }))
+// projects.json entries: "path" or { "dir": "path", "cmd": "custom command" }
+const dirOf = e => typeof e === 'string' ? e : e.dir
+const items = () => load().map(e => ({ dir: dirOf(e), name: path.basename(dirOf(e)), cmd: e.cmd }))
 
 async function refresh(st, p, fetch, draw) {
   st.busy[p.dir] = fetch ? 'fetching…' : ''
@@ -85,7 +102,7 @@ async function refresh(st, p, fetch, draw) {
 function onKey(st, key, ch, draw, finish) {
   const p = st.list[st.sel], n = st.list.length
   if (st.confirm) {
-    if (key === 'y') { save(load().filter(d => d !== p.dir)); st.list = items(); st.sel = Math.max(0, Math.min(st.sel, st.list.length - 1)) }
+    if (key === 'y') { save(load().filter(e => dirOf(e) !== p.dir)); st.list = items(); st.sel = Math.max(0, Math.min(st.sel, st.list.length - 1)) }
     st.confirm = false
     return true
   }
@@ -94,22 +111,27 @@ function onKey(st, key, ch, draw, finish) {
   if ((key === 'down' || key === 'j') && n) st.sel = (st.sel + 1) % n
   else if ((key === 'up' || key === 'k') && n) st.sel = (st.sel - 1 + n) % n
   else if (key === 'return' && n) {
-    const cmd = devCmd(p.dir)
-    if (!cmd) { st.msg = 'no dev/start script in package.json'; st.err = true }
-    else { finish(p.dir, cmd); return false }
+    const pl = plan(p, st.stale[p.dir])
+    if (!pl) { st.msg = 'no dev/start script in package.json (set "cmd" in projects.json)'; st.err = true }
+    else { finish(p.dir, pl); return false }
   }
   else if (key === 'r' && n) refresh(st, p, true, draw)
   else if (key === 'p' && n) {
     st.busy[p.dir] = 'pulling…'
-    git(p.dir, ['pull', '--ff-only']).then(async r => {
-      st.msg = r.ok ? r.out.split('\n').pop() : r.err.split('\n')[0]; st.err = !r.ok
+    git(p.dir, ['rev-parse', 'HEAD']).then(async before => {
+      const r = await git(p.dir, ['pull', '--ff-only'])
+      if (r.ok && before.ok) {
+        const changed = (await git(p.dir, ['diff', '--name-only', before.out, 'HEAD'])).out
+        if (/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/m.test(changed)) st.stale[p.dir] = true
+      }
+      st.msg = r.ok ? r.out.split('\n').pop() + (st.stale[p.dir] ? ' (deps changed, will install on launch)' : '') : r.err.split('\n')[0]; st.err = !r.ok
       await refresh(st, p, false, draw)
     })
   }
   else if (key === 'a') {
     const dir = path.resolve(process.cwd())
     if (!fs.existsSync(path.join(dir, 'package.json'))) { st.msg = 'no package.json in current dir'; st.err = true }
-    else if (load().includes(dir)) { st.msg = 'already in the list'; st.err = true }
+    else if (load().some(e => dirOf(e) === dir)) { st.msg = 'already in the list'; st.err = true }
     else { save([...load(), dir]); st.list = items(); st.sel = st.list.length - 1; refresh(st, st.list[st.sel], true, draw) }
   }
   else if (key === 'd' && n) st.confirm = true
@@ -119,10 +141,14 @@ function onKey(st, key, ch, draw, finish) {
 function main() {
   const [outfile, shell] = process.argv.slice(2)
   const o = process.stdout
-  const st = { list: items(), sel: 0, git: {}, busy: {}, msg: null }
+  const st = { list: items(), sel: 0, git: {}, busy: {}, stale: {}, msg: null }
   let picked
   const draw = () => o.write('\x1b[H' + frame(st, o.columns, o.rows))
-  const finish = (dir, cmd) => { picked = shell === 'cmd' ? `cd /d "${dir}"\r\n${cmd}\r\n` : `Set-Location -LiteralPath '${dir.replace(/'/g, "''")}'\r\n${cmd}\r\n` }
+  const finish = (dir, { cmd, install }) => {
+    picked = shell === 'cmd'
+      ? `cd /d "${dir}"\r\n${install ? install + ' && ' : ''}${cmd}\r\n`
+      : `Set-Location -LiteralPath '${dir.replace(/'/g, "''")}'\r\n${install ? `${install}\r\nif ($?) { ${cmd} }` : cmd}\r\n` // $?: PS 5.1 has no &&
+  }
   const done = () => {
     o.write('\x1b[?25h\x1b[?1049l'); process.stdin.setRawMode(false)
     if (picked && outfile) fs.writeFileSync(outfile, picked)
