@@ -1,4 +1,4 @@
-# QuickDevLaunch
+# Dev-Launcher
 
 A tiny terminal menu for starting dev servers. Type `launch`, pick a project, press Enter: it `cd`s into the project and runs its dev server in the same terminal. Each row also shows git status, so you can see unpulled changes before you start.
 
